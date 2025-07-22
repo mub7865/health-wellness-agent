@@ -1,8 +1,15 @@
-from agents import function_tool
+from pydantic import BaseModel
+from typing import Dict
+from agents import function_tool, RunContextWrapper
+from context import UserSessionContext
+
+class ProgressUpdateInput(BaseModel):
+    update: str
 
 @function_tool
-def progress_tracker(metric: str = "steps") -> str:
-    return f"📊 Tracking {metric}: Keep pushing towards your daily goal!"
-
-def track_progress():
-    return "Progress tracking tool"
+async def track_progress(ctx: RunContextWrapper[UserSessionContext], input: ProgressUpdateInput) -> str:
+    ctx.context.progress_logs.append({
+        "event": "user_update",
+        "message": input.update
+    })
+    return f"Progress update recorded: {input.update}"

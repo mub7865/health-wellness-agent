@@ -1,94 +1,77 @@
-import os
-import sys
-import asyncio
-from dotenv import load_dotenv
-
-from agents import (
-    Runner,
-    AsyncOpenAI,
-    OpenAIChatCompletionsModel,
-    ItemHelpers,
-    set_default_openai_client,
-    set_default_openai_api,
-    set_tracing_disabled,
-    RunContextWrapper,
-)
-
-from agents.run import RunConfig
-
+from agent import create_health_agent 
 from context import UserSessionContext
-from guardrails import validate_goal_input, validate_output
-from agent import create_health_agent
+from agents import Runner,OpenAIChatCompletionsModel,AsyncOpenAI,set_tracing_disabled
+from dotenv import load_dotenv
+from agents.run import RunConfig
+import asyncio, os
+from utils.streaming import stream_response
 
-sys.path.append(os.path.dirname(__file__))
 load_dotenv()
+set_tracing_disabled(disabled=True)
 
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-if not gemini_api_key:
-    raise ValueError("GEMINI_API_KEY is not set in .env")
+API_KEY = ("AIzaSyD5cwOmgg1_S7fOSjfI13SUJ3Di5e67i4Y")
+
+if not API_KEY:
+    raise ValueError("Error: GEMINI_API_KEY not found in .env file. Add your Gemini API key to proceed.")
 
 external_client = AsyncOpenAI(
-    api_key=gemini_api_key,
+    api_key=API_KEY,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 model = OpenAIChatCompletionsModel(
     model="gemini-2.0-flash",
-    openai_client=external_client,
+    openai_client=external_client
 )
 
-set_default_openai_client(client=external_client, use_for_tracing=False)
-set_default_openai_api("chat_completions")
-set_tracing_disabled(disabled=True)
+config = RunConfig(
+    model=model,
+    model_provider=external_client
+)
 
-config = RunConfig(model=model, model_provider=external_client, tracing_disabled=True)
+
+print("*" * 5 ,"Health and Wellness AI Agent", "*" * 5,"\n")
+print("Type 'exit' or 'quit' to Finish.\n")
+
+History_save = []
 
 async def main():
-    agent = create_health_agent(model)
-
-    # ✅ Create user context
-    user_context = RunContextWrapper(UserSessionContext(
-        name="User",
-        uid=1,
-        goal=None,
-        diet_preferences=None,
-        workout_plan=None,
-        meal_plan=[],
-        injury_notes=None,
-        handoff_logs=[],
-        progress_logs=[]
-    ))
-
-    print("CustomRunHooks module loaded\n")
-
+    user_context = UserSessionContext(name="khaid", uid=1001)
     while True:
-        user_input = input("Enter Your Question (or 'exit' to quit): ")
-        if user_input.lower() == "exit":
+        prompt = input("🧑 You : ")
+        if prompt.lower() in ['exit', 'quit']:
+            print("👋 Goodbye!")
             break
 
-        try:
-            validate_goal_input(user_input)
-        except ValueError as e:
-            print(f"Input Error: {e}")
-            continue
-
-        print("\nAssistant:")
-
-        result = Runner.run_streamed(agent, input=user_input, context=user_context)
-
-        async for event in result.stream_events():
-            if event.type == "run_item_stream_event":
-                if event.item.type == "tool_call_item":
-                    print(f"[Tool Call] {getattr(event.item, 'tool', 'UnknownTool')}")
-                elif event.item.type == "tool_call_output_item":
-                    print(f"[Tool Output] {event.item.output}")
-                elif event.item.type == "message_output_item":
-                    print(ItemHelpers.text_message_output(event.item))
+        user_context.messages.append({"role": "user", "content": prompt})
+        health_agent = create_health_agent(model)
 
         try:
-            validate_output(result.final_output)
-        except ValueError as e:
-            print(f"Output Error: {e}")
+            result = Runner.run_streamed(
+                health_agent,
+                prompt,
+                context=user_context,
+                run_config=config
+            )
+            await stream_response(result, user_context)
+            user_context.messages.append({"role": "assistant", "content": result.final_output})
+
+        except Exception as e:
+            if "InputGuardrailTripwireTriggered" in str(e):
+                print("🛑 [Guardrail] Input not allowed (off-topic or unsafe).")
+
+                # 🎯 Assistant explains what kind of input is expected
+                fallback_response = (
+                    "⚠️ Your input does not seem related to health, wellness, fitness, or nutrition. "
+                    "I can only assist with those topics.\n"
+                    "Please try again with a relevant question (e.g. 'I want to lose 5kg in 2 months')."
+                )
+
+                await stream_response(fallback_response, user_context)
+
+            else:
+                print(f"❌ [Unhandled Error] {e}")
+                await stream_response("⚠️ Sorry, an unexpected error occurred.", user_context)
 
 if __name__ == "__main__":
     asyncio.run(main())

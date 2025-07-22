@@ -1,5 +1,6 @@
-from typing import List, Optional, Dict
-from pydantic import BaseModel
+# context.py
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 
 class UserSessionContext(BaseModel):
     name: str
@@ -11,3 +12,4 @@ class UserSessionContext(BaseModel):
     injury_notes: Optional[str] = None
     handoff_logs: List[str] = []
     progress_logs: List[Dict[str, str]] = []
+    messages: list = Field(default_factory=list)
