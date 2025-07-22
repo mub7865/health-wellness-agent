@@ -1,12 +1,15 @@
 from fpdf import FPDF
 from datetime import datetime
 import os
+from typing import Dict, Any, List
+from textwrap import fill
+import re
 
 class PDFReportGenerator:
-    def __init__(self, context_dict: dict):
+    def __init__(self, context_dict: Dict[str, Any]):
         self.context = context_dict
 
-    def generate_report(self):
+    def generate_report(self, output_path: str = "wellness_report.pdf"):
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
@@ -21,40 +24,89 @@ class PDFReportGenerator:
         pdf.cell(200, 10, txt=f"Name: {self.context.get('name', 'N/A')}", ln=True)
         pdf.cell(200, 10, txt=f"User ID: {self.context.get('uid', 'N/A')}", ln=True)
         pdf.cell(200, 10, txt=f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
-
         pdf.ln(5)
 
-        # Goal
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(200, 10, txt="🎯 Goal", ln=True)
-        pdf.set_font("Arial", size=12)
-        pdf.multi_cell(0, 10, txt=str(self.context.get("goal", "N/A")))
+        def break_long_words(text, max_word_length=40):
+            # Insert spaces into long words to allow wrapping
+            def breaker(match):
+                word = match.group(0)
+                return ' '.join([word[i:i+max_word_length] for i in range(0, len(word), max_word_length)])
+            return re.sub(r'\S{' + str(max_word_length+1) + r',}', breaker, text)
 
-        # Meal Plan
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(200, 10, txt="🥗 Meal Plan", ln=True)
-        pdf.set_font("Arial", size=12)
-        meal_plan = self.context.get("meal_plan", [])
-        if meal_plan and isinstance(meal_plan, list):
-            for day, meal in enumerate(meal_plan, start=1):
-                pdf.cell(200, 10, txt=f"Day {day}: {meal}", ln=True)
-        else:
-            pdf.cell(200, 10, txt="No meal plan available.", ln=True)
+        def safe_multicell(text, width=90):
+            try:
+                s = str(text)
+                s = break_long_words(s)
+                wrapped = fill(s, width=width)
+                pdf.multi_cell(0, 10, txt=wrapped)
+            except Exception:
+                pass  # Skip this line if it still fails
 
-        # Workout Plan
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(200, 10, txt="💪 Workout Plan", ln=True)
-        pdf.set_font("Arial", size=12)
-        workout = self.context.get("workout_plan", {})
-        if workout:
-            pdf.multi_cell(0, 10, txt=str(workout))
-        else:
-            pdf.cell(200, 10, txt="No workout plan available.", ln=True)
+        def safe_line(text, ln=True):
+            try:
+                s = str(text)
+                s = break_long_words(s)
+                pdf.cell(200, 10, txt=fill(s, width=120), ln=ln)
+            except Exception:
+                pass
 
-        # Save file
-        output_path = "wellness_report.pdf"
+        sections = [
+            ("Goal", self.context.get("goal")),
+            ("Diet Preferences", self.context.get("diet_preferences")),
+            ("Meal Plan", self.context.get("meal_plan")),
+            ("Workout Plan", self.context.get("workout_plan")),
+            ("Injury Notes", self.context.get("injury_notes")),
+            ("Handoff Logs", self.context.get("handoff_logs")),
+            ("Progress Logs", self.context.get("progress_logs")),
+            ("Conversation Summary", self.context.get("messages")),
+        ]
+
+        for title, data in sections:
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(200, 10, txt=title, ln=True)
+            pdf.set_font("Arial", size=12)
+
+            if not data:
+                pdf.cell(200, 10, txt=f"No {title.lower()} available.", ln=True)
+                continue
+
+            if title == "Meal Plan" and isinstance(data, list):
+                for i, meal in enumerate(data, 1):
+                    safe_line(f"Day {i}: {meal}")
+            elif title == "Workout Plan":
+                if isinstance(data, dict) and "schedule" in data:
+                    for i, item in enumerate(data["schedule"], 1):
+                        safe_line(f"Day {i}: {item}")
+                else:
+                    safe_multicell(data)
+            elif title == "Progress Logs":
+                for log in data:
+                    if isinstance(log, dict):
+                        log_text = ", ".join(f"{k}: {v}" for k, v in log.items())
+                    else:
+                        log_text = str(log)
+                    safe_multicell(f"- {log_text}")
+            elif title == "Conversation Summary":
+                for msg in data:
+                    if isinstance(msg, dict):
+                        role = msg.get("role", "user")
+                        content = msg.get("content", "")
+                        safe_multicell(f"{role.title()}: {content}")
+                    else:
+                        safe_multicell(str(msg))
+            elif isinstance(data, list):
+                for item in data:
+                    safe_multicell(f"- {item}")
+            elif isinstance(data, dict):
+                for k, v in data.items():
+                    safe_multicell(f"{k}: {v}")
+            else:
+                safe_multicell(data)
+
         try:
             pdf.output(output_path)
             print(f"📄 Report saved to {output_path}")
         except PermissionError:
             print("❌ Error: Could not write PDF. Close any open 'wellness_report.pdf' file and try again.")
+        except Exception as e:
+            print(f"❌ Error: Could not write PDF. {e}")

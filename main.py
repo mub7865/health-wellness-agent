@@ -1,3 +1,5 @@
+# main.py
+
 from agent import create_health_agent 
 from context import UserSessionContext
 from agents import Runner,OpenAIChatCompletionsModel,AsyncOpenAI,set_tracing_disabled
@@ -5,6 +7,8 @@ from dotenv import load_dotenv
 from agents.run import RunConfig
 import asyncio, os
 from utils.streaming import stream_response
+from db.database import init_db, save_user_session, load_user_session
+from report.pdf_generator import PDFReportGenerator
 
 load_dotenv()
 set_tracing_disabled(disabled=True)
@@ -29,19 +33,43 @@ config = RunConfig(
     model_provider=external_client
 )
 
-
 print("*" * 5 ,"Health and Wellness AI Agent", "*" * 5,"\n")
 print("Type 'exit' or 'quit' to Finish.\n")
+print("Type 'report' to generate a PDF report of your session.\n")
 
 History_save = []
 
 async def main():
-    user_context = UserSessionContext(name="khaid", uid=1001)
+    init_db()
+    # Optionally allow user to load previous session
+    while True:
+        user_id = input("Enter your user ID to resume session (or press Enter to start new): ").strip()
+        if not user_id:
+            user_context = UserSessionContext(name="khaid", uid=1001)
+            break
+        try:
+            user_id_int = int(user_id)
+            user_context = load_user_session(user_id_int)
+            if user_context:
+                print(f"[Session loaded for user: {user_context.name} (ID: {user_context.uid})]")
+            else:
+                print("No previous session found. Starting new session.")
+                user_context = UserSessionContext(name="Muhammad Ubaid Raza", uid=user_id_int)
+            break
+        except ValueError:
+            print("Please enter a valid numeric user ID or press Enter to start a new session.")
+
     while True:
         prompt = input("🧑 You : ")
         if prompt.lower() in ['exit', 'quit']:
             print("👋 Goodbye!")
             break
+        if prompt.lower() == 'report':
+            # Generate PDF report
+            context_dict = user_context.model_dump()
+            pdf_gen = PDFReportGenerator(context_dict)
+            pdf_gen.generate_report()
+            continue
 
         user_context.messages.append({"role": "user", "content": prompt})
         health_agent = create_health_agent(model)
@@ -55,6 +83,8 @@ async def main():
             )
             await stream_response(result, user_context)
             user_context.messages.append({"role": "assistant", "content": result.final_output})
+            # Save session after each interaction
+            save_user_session(user_context)
 
         except Exception as e:
             if "InputGuardrailTripwireTriggered" in str(e):
