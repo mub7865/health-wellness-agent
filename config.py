@@ -8,7 +8,7 @@ from agents import set_tracing_disabled
 load_dotenv()
 set_tracing_disabled(disabled=True)
 
-API_KEY = ("AIzaSyD5cwOmgg1_S7fOSjfI13SUJ3Di5e67i4Y")
+API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise ValueError("Error: GEMINI_API_KEY not found in .env file. Add your Gemini API key to proceed.")
 
